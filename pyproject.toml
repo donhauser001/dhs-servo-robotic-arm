@@ -1,0 +1,41 @@
+[project]
+name = "robotic-arm"
+version = "0.1.0"
+description = "6 DOF 总线舵机机械臂控制软件（飞特 SMS_STS / 微雪 Bus Servo Driver HAT (A)）"
+requires-python = ">=3.9"
+dependencies = [
+    "pyserial>=3.5",
+    "pyyaml>=6.0",
+    "numpy>=1.24",
+]
+
+[project.optional-dependencies]
+web = [
+    "fastapi>=0.110",
+    "uvicorn[standard]>=0.27",
+    "websockets>=12.0",
+    "ruamel.yaml>=0.18",
+]
+dev = [
+    "pytest>=7.4",
+]
+
+[project.scripts]
+arm-scan = "tools.scan:main"
+arm-set-id = "tools.set_id:main"
+arm-jog = "tools.jog:main"
+arm-calibrate = "tools.calibrate:main"
+arm-calibrate-home = "tools.calibrate_home:main"
+arm-reset-ids = "tools.reset_ids:main"
+arm-demo = "tools.state_demo:main"
+arm-web = "webapp.server:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["arm*", "tools*", "webapp*"]
+
+[tool.setuptools.package-data]
+webapp = ["static/*"]

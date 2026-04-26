@@ -1,0 +1,1559 @@
+<!DOCTYPE html>
+<html lang="zh-CN" class="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
+  <title>6-DOF 机械臂控制台</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = { darkMode: 'class' };
+  </script>
+  <script defer src="https://unpkg.com/alpinejs@3.13.5/dist/cdn.min.js"></script>
+  <style>
+    :root {
+      --bg-1: #0a0f1c;
+      --bg-2: #0e1626;
+      --bg-3: #131c2f;
+      --line: #1e293b;
+      --line-2: #283549;
+      --accent: #38bdf8;
+    }
+    html, body {
+      background:
+        radial-gradient(1200px 600px at 10% -10%, rgba(56,189,248,0.08), transparent 60%),
+        radial-gradient(1000px 500px at 100% 0%, rgba(168,85,247,0.06), transparent 60%),
+        var(--bg-1);
+      min-height: 100vh;
+    }
+    .glass { background: linear-gradient(180deg, rgba(20,28,46,0.7), rgba(15,22,38,0.7)); backdrop-filter: blur(8px); }
+    .card { background: linear-gradient(180deg, rgba(22,32,52,0.6), rgba(14,22,38,0.5)); border: 1px solid rgba(51,65,85,0.6); border-radius: 14px; }
+    .card-hl { box-shadow: 0 0 0 1px rgba(56,189,248,0.18), 0 6px 30px -10px rgba(56,189,248,0.18); }
+    .scrollbar-thin::-webkit-scrollbar { width: 6px; height: 6px; }
+    .scrollbar-thin::-webkit-scrollbar-thumb { background: #334155; border-radius: 3px; }
+    .scrollbar-thin::-webkit-scrollbar-thumb:hover { background: #475569; }
+    .scrollbar-thin::-webkit-scrollbar-track { background: transparent; }
+
+    /* ----- 滑块 ----- */
+    input[type="range"] {
+      -webkit-appearance: none; appearance: none;
+      height: 6px; background: linear-gradient(90deg, #1e293b, #334155);
+      border-radius: 999px; outline: none;
+    }
+    input[type="range"]::-webkit-slider-thumb {
+      -webkit-appearance: none; appearance: none;
+      width: 18px; height: 18px; border-radius: 50%;
+      background: radial-gradient(circle at 30% 30%, #7dd3fc, #38bdf8 60%, #0284c7);
+      cursor: pointer;
+      box-shadow: 0 0 0 2px #0b1220, 0 4px 10px -2px rgba(56,189,248,0.6);
+      transition: transform 0.12s ease;
+    }
+    input[type="range"]::-webkit-slider-thumb:hover { transform: scale(1.12); }
+    input[type="range"]:disabled::-webkit-slider-thumb { background: #475569; cursor: not-allowed; box-shadow: none; }
+    input[type="range"]::-moz-range-thumb {
+      width: 18px; height: 18px; border-radius: 50%;
+      background: #38bdf8; cursor: pointer; border: 2px solid #0b1220;
+    }
+
+    /* ----- 关节进度条上的实时位置 ----- */
+    .live-bar {
+      position: absolute; top: 50%;
+      transform: translate(-50%, -50%);
+      width: 3px; height: 18px;
+      background: #fbbf24;
+      border-radius: 2px;
+      pointer-events: none;
+      box-shadow: 0 0 8px rgba(251,191,36,0.8);
+    }
+    /* 命令目标位置标记（蓝色三角） */
+    .cmd-bar {
+      position: absolute; top: 50%;
+      transform: translate(-50%, -50%);
+      width: 0; height: 0;
+      border-left: 6px solid transparent;
+      border-right: 6px solid transparent;
+      border-top: 8px solid #38bdf8;
+      pointer-events: none;
+      filter: drop-shadow(0 0 4px rgba(56,189,248,0.7));
+    }
+
+    /* ----- 关节"位置仪表" ----- */
+    .joint-gauge {
+      position: relative; height: 8px; border-radius: 999px; overflow: hidden;
+      background: linear-gradient(90deg,
+        rgba(244,63,94,0.25) 0%,
+        rgba(245,158,11,0.18) 15%,
+        rgba(34,197,94,0.18) 35%,
+        rgba(34,197,94,0.18) 65%,
+        rgba(245,158,11,0.18) 85%,
+        rgba(244,63,94,0.25) 100%
+      );
+      border: 1px solid rgba(51,65,85,0.6);
+    }
+    .joint-gauge .ticks {
+      position: absolute; inset: 0;
+      background-image: repeating-linear-gradient(90deg,
+        rgba(148,163,184,0.15) 0 1px,
+        transparent 1px 25%);
+    }
+    .joint-gauge .home-mark {
+      position: absolute; top: -2px; bottom: -2px; width: 2px;
+      background: rgba(148,163,184,0.6);
+    }
+    .joint-gauge .live-fill {
+      position: absolute; top: 0; bottom: 0; left: 50%;
+      background: linear-gradient(90deg, rgba(56,189,248,0.0), rgba(56,189,248,0.8));
+      transition: width 0.18s ease;
+    }
+    .joint-gauge .live-dot {
+      position: absolute; top: 50%; transform: translate(-50%, -50%);
+      width: 12px; height: 12px; border-radius: 50%;
+      background: #fbbf24; border: 2px solid #0b1220;
+      box-shadow: 0 0 10px rgba(251,191,36,0.7);
+      transition: left 0.18s ease;
+    }
+    .joint-gauge .live-dot.locked {
+      background: #f43f5e;
+      box-shadow: 0 0 12px rgba(244,63,94,0.8);
+      animation: lockBlink 1.4s ease-in-out infinite;
+    }
+
+    /* ----- Toast 滑入动画 ----- */
+    @keyframes toastIn { from { transform: translateX(120%); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
+    .toast-anim { animation: toastIn 0.25s cubic-bezier(.2,.7,.2,1) both; }
+
+    /* ----- 干预事件徽章呼吸 ----- */
+    @keyframes pulseRing { 0% { box-shadow: 0 0 0 0 rgba(244,63,94,0.5); } 70% { box-shadow: 0 0 0 8px rgba(244,63,94,0); } 100% { box-shadow: 0 0 0 0 rgba(244,63,94,0); } }
+    .pulse-ring { animation: pulseRing 1.6s ease-out infinite; }
+
+    /* ----- Tab ----- */
+    .tab-btn {
+      padding: 0.5rem 0.85rem; font-size: 0.8rem; border-radius: 0.5rem;
+      color: #94a3b8; transition: all 0.15s ease;
+    }
+    .tab-btn:hover { color: #cbd5e1; background: rgba(51,65,85,0.4); }
+    .tab-btn.active { color: #f1f5f9; background: rgba(56,189,248,0.15); box-shadow: inset 0 0 0 1px rgba(56,189,248,0.3); }
+    .tab-btn .badge {
+      display: inline-block; min-width: 1.2em;
+      padding: 0 0.35em; margin-left: 0.4em;
+      font-size: 0.65rem; font-weight: 600; line-height: 1.4;
+      border-radius: 999px; background: rgba(148,163,184,0.18);
+      color: #cbd5e1;
+    }
+    .tab-btn.active .badge { background: rgba(56,189,248,0.25); color: #e0f2fe; }
+
+    /* ----- 控制按钮统一样式（带 hover 抬升） ----- */
+    .btn { display: inline-flex; align-items: center; gap: 0.4rem; padding: 0.5rem 0.9rem; border-radius: 0.5rem; font-size: 0.85rem; font-weight: 500; transition: all 0.15s ease; box-shadow: 0 1px 0 rgba(255,255,255,0.04) inset; }
+    .btn:hover:not(:disabled) { transform: translateY(-1px); box-shadow: 0 4px 12px -2px rgba(0,0,0,0.35), 0 1px 0 rgba(255,255,255,0.05) inset; }
+    .btn:disabled { opacity: 0.45; cursor: not-allowed; }
+    .btn-primary { background: linear-gradient(180deg, #0ea5e9, #0284c7); color: white; }
+    .btn-primary:hover:not(:disabled) { background: linear-gradient(180deg, #38bdf8, #0ea5e9); }
+    .btn-success { background: linear-gradient(180deg, #10b981, #059669); color: white; }
+    .btn-warning { background: linear-gradient(180deg, #f59e0b, #d97706); color: white; }
+    .btn-danger  { background: linear-gradient(180deg, #f43f5e, #be123c); color: white; }
+    .btn-ghost   { background: rgba(51,65,85,0.55); color: #cbd5e1; }
+    .btn-ghost:hover:not(:disabled) { background: rgba(71,85,105,0.7); }
+    .btn-sm { padding: 0.3rem 0.55rem; font-size: 0.72rem; border-radius: 0.4rem; }
+    .btn-xs { padding: 0.18rem 0.45rem; font-size: 0.65rem; border-radius: 0.35rem; }
+
+    /* ----- 状态徽章 ----- */
+    .badge-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; }
+    .badge-dot.on  { background: #34d399; box-shadow: 0 0 8px #34d399; }
+    .badge-dot.off { background: #94a3b8; }
+    .badge-dot.err { background: #f43f5e; box-shadow: 0 0 8px #f43f5e; }
+
+    /* ----- 锁定 / 激活闪烁 ----- */
+    @keyframes lockBlink { 0%,100% { opacity: 1; } 50% { opacity: 0.5; } }
+    .lock-blink { animation: lockBlink 1.4s ease-in-out infinite; }
+
+    /* details 三角去掉 */
+    details > summary { list-style: none; cursor: pointer; }
+    details > summary::-webkit-details-marker { display: none; }
+  </style>
+</head>
+<body class="text-slate-100 font-sans antialiased min-h-screen">
+<main x-data="armApp()" x-init="init()" class="pb-20"
+      @keydown.escape.window="interventionsOpen = false">
+
+  <!-- ============ Sticky 顶栏：标题 / 状态 / 单位 / 一键操作 ============ -->
+  <header class="sticky top-0 z-40 glass border-b border-slate-700/60">
+    <div class="max-w-6xl mx-auto px-4 py-3 flex items-center gap-3 flex-wrap">
+      <!-- 品牌 + 连接 -->
+      <div class="flex items-center gap-2.5 mr-2">
+        <div class="w-8 h-8 rounded-lg flex items-center justify-center text-base"
+             style="background: linear-gradient(135deg,#0ea5e9,#a855f7); box-shadow: 0 4px 14px -2px rgba(56,189,248,0.4);">
+          <span aria-hidden="true">🦾</span>
+        </div>
+        <div class="flex flex-col leading-tight">
+          <h1 class="text-sm font-semibold tracking-tight">6-DOF 机械臂控制台</h1>
+          <span class="text-[10px] flex items-center gap-1 text-slate-400">
+            <span class="badge-dot" :class="ws.connected ? 'on' : 'err'"></span>
+            <span x-text="ws.connected ? 'WebSocket 已连接' : '断线重连中…'"></span>
+          </span>
+        </div>
+      </div>
+
+      <!-- 工作状态徽章 -->
+      <span class="px-2.5 py-1 text-[11px] font-mono rounded-md inline-flex items-center gap-1.5 transition"
+            :class="state.state==='enabled'
+                    ? 'bg-emerald-500/15 text-emerald-300 ring-1 ring-emerald-500/30 shadow-[0_0_20px_-5px_rgba(16,185,129,0.5)]'
+                    : 'bg-slate-600/30 text-slate-300 ring-1 ring-slate-500/30'"
+            :title="state.state==='enabled' ? '扭矩已开，关节可移动' : '扭矩关闭，先点 enable'">
+        <span class="badge-dot" :class="state.state==='enabled' ? 'on' : 'off'"></span>
+        <span x-text="(state.state || 'disabled').toUpperCase()"></span>
+      </span>
+
+      <!-- 规则计数 -->
+      <span class="hidden sm:inline-flex items-center gap-2 text-[11px] text-slate-400 font-mono">
+        <span title="联锁约束"><span class="text-rose-300" x-text="(state.constraints||[]).length"></span> 联锁</span>
+        <span class="text-slate-600">·</span>
+        <span title="前置联动"><span class="text-sky-300" x-text="(state.prerequisites||[]).length"></span> 前置</span>
+        <span class="text-slate-600">·</span>
+        <span title="条件限位"><span class="text-amber-300" x-text="(state.zone_limits||[]).length"></span> 限位</span>
+      </span>
+
+      <div class="flex-1"></div>
+
+      <!-- 单位切换 -->
+      <div class="inline-flex bg-slate-800/80 rounded-md p-0.5 ring-1 ring-slate-700">
+        <button @click="unit='pct'" :class="unit==='pct' ? 'bg-sky-600 text-white' : 'text-slate-400 hover:text-slate-200'"
+                class="px-2.5 py-1 text-[11px] rounded font-mono transition">pct</button>
+        <button @click="unit='deg'" :class="unit==='deg' ? 'bg-sky-600 text-white' : 'text-slate-400 hover:text-slate-200'"
+                class="px-2.5 py-1 text-[11px] rounded font-mono transition">deg</button>
+        <button @click="unit='raw'" :class="unit==='raw' ? 'bg-sky-600 text-white' : 'text-slate-400 hover:text-slate-200'"
+                class="px-2.5 py-1 text-[11px] rounded font-mono transition">raw</button>
+      </div>
+
+      <!-- 干预事件触发器（铃铛） -->
+      <button class="relative btn btn-ghost btn-sm"
+              @click="interventionsOpen = !interventionsOpen"
+              title="最近干预事件">
+        <span aria-hidden="true">🔔</span>
+        <span class="hidden md:inline">干预</span>
+        <template x-if="(state.interventions||[]).length">
+          <span class="absolute -top-1 -right-1 min-w-[18px] h-[18px] px-1 rounded-full bg-rose-500 text-white text-[10px] font-bold flex items-center justify-center pulse-ring"
+                x-text="(state.interventions||[]).length > 99 ? '99+' : (state.interventions||[]).length"></span>
+        </template>
+      </button>
+
+      <!-- 紧急停止：sticky 永远可点 -->
+      <button class="btn btn-danger"
+              @click="if(confirm('紧急停止：扭矩 OFF，机械臂可能在重力下移动。继续？')) callApi('POST','/api/emergency-stop')"
+              :disabled="busy">
+        <span aria-hidden="true">⛔</span>
+        <span class="hidden sm:inline">紧急停止</span>
+      </button>
+    </div>
+
+    <!-- 第二行：核心命令 -->
+    <div class="max-w-6xl mx-auto px-4 pb-3 flex items-center gap-2 flex-wrap">
+      <button @click="callApi('POST','/api/enable')" :disabled="busy || state.state==='enabled'"
+              class="btn btn-success btn-sm">
+        <span aria-hidden="true">▶</span> enable → ready
+      </button>
+      <button @click="callApi('POST','/api/disable',{to:'safe'})" :disabled="busy || state.state==='disabled'"
+              class="btn btn-warning btn-sm">
+        <span aria-hidden="true">⏸</span> disable → safe
+      </button>
+      <button @click="callApi('POST','/api/move-home')" :disabled="busy || state.state!=='enabled'"
+              class="btn btn-primary btn-sm">
+        <span aria-hidden="true">⌂</span> move home
+      </button>
+      <span class="text-[10px] text-slate-500 ml-auto hidden sm:inline">
+        FastAPI · WS 5Hz · Pi 端 <span class="font-mono">arm-web</span>
+      </span>
+    </div>
+  </header>
+
+  <div class="max-w-6xl mx-auto px-4 py-5 space-y-5">
+
+  <template x-if="!state.ready">
+    <div class="bg-rose-500/10 border border-rose-500/40 text-rose-300 rounded-xl p-4 text-sm flex items-start gap-3">
+      <span class="text-2xl leading-none" aria-hidden="true">⚠️</span>
+      <div>
+        <div class="font-semibold">服务未就绪</div>
+        <div class="text-rose-200/80 mt-0.5" x-text="state.error || '总线未打开，请确认舵机供电与串口连接'"></div>
+      </div>
+    </div>
+  </template>
+
+  <!-- ============ 关节 ============ -->
+  <section class="card p-4 space-y-3">
+    <div class="flex items-center justify-between flex-wrap gap-2">
+      <h2 class="font-semibold tracking-tight flex items-center gap-2">
+        <span class="text-base" aria-hidden="true">🦾</span>
+        <span>关节控制</span>
+        <span class="text-[10px] font-normal text-slate-500" x-text="'(' + (state.joints||[]).length + ' 轴)'"></span>
+      </h2>
+      <div class="text-[11px] text-slate-500 flex items-center gap-3 font-mono">
+        <span class="flex items-center gap-1"><span class="badge-dot" style="background:#fbbf24"></span>当前位置</span>
+        <span class="flex items-center gap-1"><span class="inline-block w-0 h-0" style="border-left:5px solid transparent;border-right:5px solid transparent;border-top:6px solid #38bdf8"></span>命令目标</span>
+        <span class="text-slate-600">滑块松手即发</span>
+      </div>
+    </div>
+
+    <div class="space-y-2">
+      <template x-for="(j, idx) in state.joints" :key="j.name">
+        <div class="rounded-lg p-3 border transition"
+             :class="j.locked ? 'bg-rose-500/5 border-rose-500/30' : 'bg-slate-900/40 border-slate-700/60 hover:border-slate-600'">
+          <!-- 头部行：编号 / 名字 / ID / 锁 / 实时数值 -->
+          <div class="flex items-center gap-3 flex-wrap text-sm">
+            <span class="font-mono text-xs px-1.5 py-0.5 rounded bg-slate-800 text-sky-300 ring-1 ring-slate-700"
+                  x-text="'J'+(idx+1)"></span>
+            <span class="font-medium" x-text="j.name"></span>
+            <span class="text-[10px] text-slate-500 font-mono" x-text="'ID '+j.id+' · '+j.model"></span>
+            <span x-show="j.locked"
+                  class="text-[11px] px-2 py-0.5 bg-rose-500/20 text-rose-300 rounded-md font-mono lock-blink ring-1 ring-rose-500/30"
+                  :title="j.lock_reason">🔒 锁定</span>
+            <div class="ml-auto flex items-center gap-2 font-mono text-[11px]">
+              <span class="px-1.5 py-0.5 rounded bg-slate-800/60 text-slate-300">
+                <span class="text-slate-500">raw</span> <span x-text="j.raw"></span>
+              </span>
+              <span class="px-1.5 py-0.5 rounded bg-slate-800/60 text-slate-300">
+                <span class="text-slate-500">pct</span> <span x-text="(j.pct*100).toFixed(1)"></span><span class="text-slate-500">%</span>
+              </span>
+              <span class="px-1.5 py-0.5 rounded bg-slate-800/60 text-slate-300"
+                    x-show="j.deg!==null && j.deg!==undefined">
+                <span class="text-slate-500">deg</span> <span x-text="(j.deg ?? 0).toFixed(1)"></span><span class="text-slate-500">°</span>
+              </span>
+            </div>
+          </div>
+
+          <!-- 位置仪表（独立可视化条，不可交互，永远显示） -->
+          <div class="mt-2 px-1">
+            <div class="joint-gauge">
+              <div class="ticks"></div>
+              <!-- home 标记 -->
+              <div class="home-mark" :style="`left: ${gaugeHomePct(j)}%`" title="home"></div>
+              <!-- 当前位置点（按 raw 范围映射；锁定时变红） -->
+              <div class="live-dot" :class="j.locked ? 'locked' : ''"
+                   :style="`left: ${gaugeLivePct(j)}%`"
+                   :title="'实时位置 raw=' + j.raw"></div>
+            </div>
+          </div>
+
+          <!-- 控制行：滑块 + 数字输入 + 按钮 -->
+          <div class="mt-3 flex items-center gap-2 flex-wrap">
+            <!-- 滑块 -->
+            <div class="relative flex-1 min-w-[260px] flex items-center gap-2">
+              <span class="text-[10px] text-slate-500 font-mono w-12 text-right" x-text="sliderMinLabel(j)"></span>
+              <div class="relative flex-1 h-6 flex items-center">
+                <input type="range" class="w-full"
+                       :min="sliderMin(j)" :max="sliderMax(j)" :step="sliderStep(j)"
+                       :value="cmd[idx] ?? sliderCurrent(j)"
+                       :disabled="sliderDisabled(j)"
+                       :title="unit==='deg' && !hasDegMapping(j) ? '该关节未标定度数（min_deg/max_deg）' : ''"
+                       @input="cmd[idx] = parseFloat($event.target.value)"
+                       @change="sendJoint(idx, parseFloat($event.target.value))" />
+                <!-- 当前实时位置标记 -->
+                <div class="live-bar"
+                     :style="`left: ${liveMarkPct(j)}%`"
+                     title="当前实时位置"></div>
+                <!-- 命令目标位置标记（仅当与实时位置错开时显示） -->
+                <div class="cmd-bar"
+                     x-show="Math.abs(cmdMarkPct(j, idx) - liveMarkPct(j)) > 1.5 && !sliderDisabled(j)"
+                     :style="`left: ${cmdMarkPct(j, idx)}%`"
+                     title="命令目标位置"></div>
+              </div>
+              <span class="text-[10px] text-slate-500 font-mono w-12" x-text="sliderMaxLabel(j)"></span>
+            </div>
+
+            <!-- 数字输入 -->
+            <div class="flex items-center gap-1">
+              <input type="number" class="w-20 bg-slate-950/60 border border-slate-700 rounded-md px-2 py-1 text-xs font-mono focus:border-sky-500 focus:outline-none focus:ring-1 focus:ring-sky-500/30"
+                     :value="cmd[idx] ?? sliderCurrent(j)"
+                     :step="sliderStep(j)"
+                     :disabled="sliderDisabled(j)"
+                     @change="cmd[idx] = parseFloat($event.target.value); sendJoint(idx, cmd[idx])" />
+              <button class="btn btn-ghost btn-xs"
+                      @click="cmd[idx] = sliderCurrent(j)"
+                      title="把滑块拉到当前位置">↺</button>
+              <button class="btn btn-ghost btn-xs"
+                      :disabled="state.state!=='enabled'"
+                      @click="cmd[idx] = unit==='raw' ? j.home_raw : 0; sendJoint(idx, cmd[idx])"
+                      title="走 home（pct=0）">⌂</button>
+            </div>
+
+            <!-- 标定面板触发 -->
+            <button class="btn btn-xs"
+                    :class="calOpen[idx] ? 'btn-primary' : 'btn-ghost'"
+                    @click="calOpen[idx] = !calOpen[idx]">
+              <span aria-hidden="true">⚙</span>
+              <span x-text="calOpen[idx] ? '关闭标定' : '标定'"></span>
+            </button>
+          </div>
+
+          <!-- 标定面板（折叠） -->
+          <div x-show="calOpen[idx]" x-transition class="mt-3 pt-3 border-t border-slate-700/60"
+               x-data="calForm(j)">
+            <div class="grid md:grid-cols-3 gap-2 text-xs">
+              <template x-for="fld in ['home_raw','max_raw','low_raw']" :key="fld">
+                <div class="bg-slate-950/40 rounded-md px-2 py-2 flex items-center gap-2 ring-1 ring-slate-700/60">
+                  <span class="w-16 text-slate-400 font-mono" x-text="fld"></span>
+                  <input type="number" class="flex-1 bg-slate-950 border border-slate-700 rounded px-2 py-1 font-mono focus:border-sky-500 focus:outline-none"
+                         x-model.number="form[fld]" />
+                  <button class="btn btn-primary btn-xs"
+                          @click="captureRaw(j.name, fld)" title="读当前 raw 填入">📍</button>
+                </div>
+              </template>
+              <template x-for="fld in ['min_deg','max_deg','home_deg']" :key="fld">
+                <div class="bg-slate-950/40 rounded-md px-2 py-2 flex items-center gap-2 ring-1 ring-slate-700/60">
+                  <span class="w-16 text-slate-400 font-mono" x-text="fld"></span>
+                  <input type="number" step="0.1"
+                         class="flex-1 bg-slate-950 border border-slate-700 rounded px-2 py-1 font-mono focus:border-sky-500 focus:outline-none"
+                         x-model.number="form[fld]" />
+                </div>
+              </template>
+            </div>
+            <div class="mt-2 flex items-center gap-2 text-xs flex-wrap">
+              <button class="btn btn-success btn-sm" @click="saveCal(j.name)">
+                <span aria-hidden="true">💾</span> 保存到 yaml
+              </button>
+              <button class="btn btn-sm"
+                      :class="form.unset_low ? 'btn-danger' : 'btn-ghost'"
+                      @click="form.unset_low = !form.unset_low"
+                      x-text="form.unset_low ? '✓ 删除 low_raw（变单向）' : '删除 low_raw'"></button>
+              <button class="btn btn-sm"
+                      :class="form.unset_deg ? 'btn-danger' : 'btn-ghost'"
+                      @click="form.unset_deg = !form.unset_deg"
+                      x-text="form.unset_deg ? '✓ 清空度数映射' : '清空度数映射'"></button>
+              <span class="text-slate-500 ml-auto">📍 = 读当前 raw 填入</span>
+            </div>
+          </div>
+        </div>
+      </template>
+    </div>
+  </section>
+
+  <!-- ============ 命名姿态 ============ -->
+  <section class="card p-4 space-y-3">
+    <div class="flex items-center justify-between flex-wrap gap-2">
+      <h2 class="font-semibold tracking-tight flex items-center gap-2">
+        <span class="text-base" aria-hidden="true">📷</span>
+        <span>命名姿态</span>
+        <span class="text-[10px] font-normal text-slate-500"
+              x-text="'(' + Object.keys(state.poses||{}).length + ')'"></span>
+      </h2>
+      <div class="flex items-center gap-2">
+        <input type="text" placeholder="新姿态名…" x-model="newPoseName"
+               @keydown.enter="if(newPoseName.trim() && !busy) capturePose()"
+               class="bg-slate-950/60 border border-slate-700 rounded-md px-2.5 py-1.5 text-sm w-40 focus:border-sky-500 focus:outline-none focus:ring-1 focus:ring-sky-500/30" />
+        <button class="btn btn-primary btn-sm"
+                @click="capturePose()" :disabled="!newPoseName.trim() || busy">
+          <span aria-hidden="true">📸</span> 捕获当前
+        </button>
+      </div>
+    </div>
+
+    <div class="grid sm:grid-cols-2 md:grid-cols-3 gap-2">
+      <template x-for="(raws, name) in state.poses" :key="name">
+        <div class="bg-slate-900/40 rounded-lg p-2.5 border border-slate-700/60 hover:border-sky-500/40 hover:bg-slate-900/70 transition group">
+          <div class="flex items-center gap-2 mb-1.5">
+            <span class="font-mono font-medium text-sm truncate" x-text="name"></span>
+            <span class="ml-auto flex items-center gap-1 opacity-60 group-hover:opacity-100 transition">
+              <button class="btn btn-success btn-xs"
+                      :disabled="state.state!=='enabled' || busy"
+                      @click="callApi('POST','/api/goto-pose',{name:name})"
+                      title="走到该姿态">→ 走</button>
+              <button class="btn btn-ghost btn-xs hover:bg-rose-600 hover:text-white"
+                      @click="if(confirm('删除姿态 '+name+'？')) callApi('DELETE','/api/poses/'+encodeURIComponent(name))"
+                      title="删除">×</button>
+            </span>
+          </div>
+          <!-- 6轴 raw 迷你条形图 -->
+          <div class="flex items-end gap-1 h-6">
+            <template x-for="(rv, ri) in raws" :key="ri">
+              <div class="flex-1 bg-slate-800 rounded-sm overflow-hidden relative" style="min-width:6px;">
+                <div class="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-sky-600 to-sky-400"
+                     :style="`height: ${Math.min(100, Math.max(2, (rv/4095)*100))}%`"></div>
+              </div>
+            </template>
+          </div>
+          <div class="mt-1 text-[10px] text-slate-500 font-mono truncate" x-text="'['+raws.join(', ')+']'"></div>
+        </div>
+      </template>
+      <template x-if="!Object.keys(state.poses||{}).length">
+        <div class="col-span-full bg-slate-900/30 border border-dashed border-slate-700 rounded-lg p-6 text-center text-sm text-slate-500">
+          <div class="text-3xl mb-2" aria-hidden="true">📭</div>
+          还没有命名姿态。把机械臂摆好 → 输入名字 → 点"捕获"。
+        </div>
+      </template>
+    </div>
+  </section>
+
+  <!-- ============ 联动规则（Tab：联锁 / 前置 / 限位） ============ -->
+  <section class="card p-4 space-y-3">
+    <div class="flex items-center justify-between flex-wrap gap-2">
+      <h2 class="font-semibold tracking-tight flex items-center gap-2">
+        <span class="text-base" aria-hidden="true">🔗</span>
+        <span>联动规则</span>
+      </h2>
+      <div class="text-[11px] text-slate-500 leading-relaxed max-w-md text-right">
+        每帧按 <span class="text-amber-300 font-semibold">前置 → 限位 → 联锁</span> 顺序检查；
+        多条规则同触发时<b class="text-slate-300">最严的胜出</b>。
+      </div>
+    </div>
+
+    <!-- Tab 切换 -->
+    <div class="flex items-center gap-1 border-b border-slate-700/60 overflow-x-auto scrollbar-thin">
+      <button class="tab-btn whitespace-nowrap"
+              :class="ruleTab==='constraint' ? 'active' : ''"
+              @click="ruleTab='constraint'">
+        <span aria-hidden="true">🔒</span> 联锁约束
+        <span class="badge" x-text="(state.constraints||[]).length"></span>
+      </button>
+      <button class="tab-btn whitespace-nowrap"
+              :class="ruleTab==='prerequisite' ? 'active' : ''"
+              @click="ruleTab='prerequisite'">
+        <span aria-hidden="true">⏱</span> 前置联动
+        <span class="badge" x-text="(state.prerequisites||[]).length"></span>
+      </button>
+      <button class="tab-btn whitespace-nowrap"
+              :class="ruleTab==='zone_limit' ? 'active' : ''"
+              @click="ruleTab='zone_limit'">
+        <span aria-hidden="true">🚧</span> 条件限位
+        <span class="badge" x-text="(state.zone_limits||[]).length"></span>
+      </button>
+    </div>
+
+    <!-- ====== Tab 内容：联锁 ====== -->
+    <div x-show="ruleTab==='constraint'" x-transition.opacity class="space-y-3">
+    <div class="flex items-center justify-between flex-wrap gap-2">
+      <div class="text-xs text-slate-500 flex-1 min-w-0">
+        含义：当 gate 关节物理角度不满足 <code class="text-slate-300">deg &gt; / &lt; 阈值</code> 时，
+        target 关节被冻结到当前 raw。
+        <span class="text-slate-400">gate 必须已标定 min_deg/max_deg。</span>
+      </div>
+      <button class="btn btn-sm shrink-0"
+              :class="newC.show ? 'btn-ghost' : 'btn-primary'"
+              @click="newC.show = !newC.show; if(newC.show) resetNewConstraint()">
+        <span x-text="newC.show ? '✕ 取消' : '+ 新增约束'"></span>
+      </button>
+    </div>
+
+    <!-- 新增约束表单 -->
+    <div x-show="newC.show" x-transition
+         class="bg-slate-900/60 rounded-md p-3 border border-slate-700/60 grid md:grid-cols-4 gap-2 items-end text-sm">
+      <div>
+        <label class="block text-xs text-slate-400 mb-1">target（被锁的关节）</label>
+        <select x-model="newC.target"
+                class="w-full bg-slate-950 border border-slate-700 rounded px-2 py-1">
+          <option value="">— 选择 —</option>
+          <template x-for="j in (state.joints||[])" :key="j.name">
+            <option :value="j.name" x-text="jointLabel(j)"></option>
+          </template>
+        </select>
+      </div>
+      <div>
+        <label class="block text-xs text-slate-400 mb-1">gate（看哪个关节）</label>
+        <select x-model="newC.gate"
+                class="w-full bg-slate-950 border border-slate-700 rounded px-2 py-1">
+          <option value="">— 选择 —</option>
+          <template x-for="j in (state.joints||[])" :key="j.name">
+            <option :value="j.name" :disabled="!hasDegMapping(j)"
+                    x-text="jointLabel(j) + (hasDegMapping(j) ? '' : ' (未标度数)')"></option>
+          </template>
+        </select>
+      </div>
+      <div>
+        <label class="block text-xs text-slate-400 mb-1">
+          阈值（gate <span x-text="newC.op"></span> 阈值° 才解锁）
+        </label>
+        <div class="flex items-center gap-1">
+          <div class="inline-flex bg-slate-800 rounded p-0.5 text-xs shrink-0">
+            <button type="button" class="px-2 py-1 rounded font-mono"
+                    :class="newC.op==='>' ? 'bg-sky-600' : 'hover:bg-slate-700'"
+                    @click="newC.op='>'">&gt;</button>
+            <button type="button" class="px-2 py-1 rounded font-mono"
+                    :class="newC.op==='<' ? 'bg-sky-600' : 'hover:bg-slate-700'"
+                    @click="newC.op='<'">&lt;</button>
+          </div>
+          <input type="number" step="0.5" x-model.number="newC.gate_min_deg"
+                 class="flex-1 min-w-0 bg-slate-950 border border-slate-700 rounded px-2 py-1 font-mono" />
+        </div>
+      </div>
+      <button class="bg-emerald-600 hover:bg-emerald-500 px-3 py-1.5 rounded text-sm"
+              :disabled="!newC.target || !newC.gate || newC.target===newC.gate"
+              @click="addConstraint()">
+        添加
+      </button>
+    </div>
+
+    <table class="w-full text-sm" x-show="(state.constraints||[]).length">
+      <thead class="text-slate-400 text-xs">
+        <tr class="border-b border-slate-700">
+          <th class="text-left py-1 pr-2 w-16">启用</th>
+          <th class="text-left py-1 pr-4">target（被锁的关节）</th>
+          <th class="text-left py-1 pr-4">gate（看哪个关节）</th>
+          <th class="text-left py-1 pr-4">阈值</th>
+          <th class="text-left py-1 pr-4">当前是否满足</th>
+          <th class="text-left py-1 pr-2">备注</th>
+          <th class="text-left py-1 w-12"></th>
+        </tr>
+      </thead>
+      <tbody>
+        <template x-for="c in state.constraints" :key="c.target+'_'+c.gate">
+          <tr class="border-b border-slate-700/40" :class="{'opacity-50': c.enabled === false}">
+            <td class="py-1 pr-2">
+              <button class="relative inline-flex h-4 w-8 items-center rounded-full transition"
+                      :class="c.enabled !== false ? 'bg-emerald-500' : 'bg-slate-600'"
+                      @click="toggleConstraintEnabled(c)" title="启用 / 禁用">
+                <span class="inline-block h-3 w-3 transform rounded-full bg-white transition"
+                      :class="c.enabled !== false ? 'translate-x-4' : 'translate-x-0.5'"></span>
+              </button>
+            </td>
+            <td class="py-1 pr-4 font-mono" x-text="jointLabelByName(c.target)"></td>
+            <td class="py-1 pr-4 font-mono" x-text="jointLabelByName(c.gate)"></td>
+            <td class="py-1 pr-4 font-mono">
+              <span x-show="editC.key !== c.target+'_'+c.gate"
+                    x-text="(c.op || '>')+' '+c.gate_min_deg+'°'"
+                    class="cursor-pointer hover:text-sky-400"
+                    title="点击改阈值 / 方向"
+                    @click="startEditConstraint(c)"></span>
+              <span x-show="editC.key === c.target+'_'+c.gate" class="inline-flex items-center gap-1">
+                <div class="inline-flex bg-slate-800 rounded p-0.5 text-[10px]">
+                  <button type="button" class="px-1.5 py-0.5 rounded font-mono"
+                          :class="editC.op==='>' ? 'bg-sky-600' : 'hover:bg-slate-700'"
+                          @click="editC.op='>'">&gt;</button>
+                  <button type="button" class="px-1.5 py-0.5 rounded font-mono"
+                          :class="editC.op==='<' ? 'bg-sky-600' : 'hover:bg-slate-700'"
+                          @click="editC.op='<'">&lt;</button>
+                </div>
+                <input type="number" step="0.5" x-model.number="editC.gate_min_deg"
+                       class="w-20 bg-slate-950 border border-slate-700 rounded px-2 py-0.5 font-mono"
+                       @keydown.enter="saveEditConstraint(c)"
+                       @keydown.escape="editC.key=null" />°
+                <button class="px-1.5 py-0.5 bg-emerald-600 hover:bg-emerald-500 rounded text-[10px]"
+                        @click="saveEditConstraint(c)">保存</button>
+                <button class="px-1.5 py-0.5 bg-slate-700 hover:bg-slate-600 rounded text-[10px]"
+                        @click="editC.key=null">×</button>
+              </span>
+            </td>
+            <td class="py-1 pr-4">
+              <span x-show="c.enabled === false" class="text-slate-500">— 已禁用</span>
+              <template x-if="c.enabled !== false">
+                <span>
+                  <span x-show="constraintSatisfied(c)" class="text-emerald-400">✓ 解锁</span>
+                  <span x-show="!constraintSatisfied(c)" class="text-rose-400">
+                    ✗ 锁定 — <span x-text="constraintNote(c)"></span>
+                  </span>
+                </span>
+              </template>
+            </td>
+            <td class="py-1 pr-2">
+              <button class="text-xs text-slate-400 hover:text-sky-300 italic max-w-[12rem] truncate text-left"
+                      @click="editRuleNote('constraint', c)"
+                      :title="c.note || '点击添加备注'">
+                <span x-text="c.note || '＋'"></span>
+              </button>
+            </td>
+            <td class="py-1">
+              <button class="px-2 py-0.5 bg-slate-700 hover:bg-rose-700 rounded text-xs"
+                      @click="deleteConstraint(c)" title="删除该约束">×</button>
+            </td>
+          </tr>
+        </template>
+      </tbody>
+    </table>
+
+    <div x-show="!(state.constraints||[]).length"
+         class="bg-slate-900/30 border border-dashed border-slate-700 rounded-lg p-6 text-center text-sm text-slate-500">
+      <div class="text-3xl mb-2" aria-hidden="true">🔓</div>
+      还没有联锁约束。点右上角 "+ 新增约束" 来添加。
+    </div>
+    </div><!-- end Tab: constraint -->
+
+    <!-- ====== Tab 内容：前置联动 ====== -->
+    <div x-show="ruleTab==='prerequisite'" x-transition.opacity class="space-y-3">
+    <div class="flex items-center justify-between flex-wrap gap-2">
+      <div class="text-xs text-slate-500 flex-1 min-w-0">
+        含义：当 target 想去 <code class="text-slate-300">target_op target_deg</code> 时，
+        gate 必须先满足 <code class="text-slate-300">gate_op gate_deg</code>，
+        否则<b class="text-amber-300">系统先自动转 gate 到安全位置</b>再继续。
+      </div>
+      <button class="btn btn-sm shrink-0"
+              :class="newP.show ? 'btn-ghost' : 'btn-primary'"
+              @click="newP.show = !newP.show; if(newP.show) resetNewPrereq()">
+        <span x-text="newP.show ? '✕ 取消' : '+ 新增前置联动'"></span>
+      </button>
+    </div>
+
+    <!-- 新增前置联动表单 -->
+    <div x-show="newP.show" x-transition
+         class="bg-slate-900/60 rounded-md p-3 border border-slate-700/60 space-y-2 text-sm">
+      <div class="grid md:grid-cols-3 gap-2">
+        <!-- target 关节 -->
+        <div>
+          <label class="block text-xs text-slate-400 mb-1">target（哪个关节的动作触发）</label>
+          <select x-model="newP.target"
+                  class="w-full bg-slate-950 border border-slate-700 rounded px-2 py-1">
+            <option value="">— 选择 —</option>
+            <template x-for="j in (state.joints||[])" :key="j.name">
+              <option :value="j.name" :disabled="!hasDegMapping(j)"
+                      x-text="jointLabel(j) + (hasDegMapping(j) ? '' : ' (未标度数)')"></option>
+            </template>
+          </select>
+        </div>
+        <!-- target_op + target_deg -->
+        <div>
+          <label class="block text-xs text-slate-400 mb-1">
+            触发条件（target 想去 <span x-text="newP.target_op"></span> 阈值°）
+          </label>
+          <div class="flex items-center gap-1">
+            <div class="inline-flex bg-slate-800 rounded p-0.5 text-xs shrink-0">
+              <button type="button" class="px-2 py-1 rounded font-mono"
+                      :class="newP.target_op==='>' ? 'bg-sky-600' : 'hover:bg-slate-700'"
+                      @click="newP.target_op='>'">&gt;</button>
+              <button type="button" class="px-2 py-1 rounded font-mono"
+                      :class="newP.target_op==='<' ? 'bg-sky-600' : 'hover:bg-slate-700'"
+                      @click="newP.target_op='<'">&lt;</button>
+            </div>
+            <input type="number" step="0.5" x-model.number="newP.target_deg"
+                   class="flex-1 min-w-0 bg-slate-950 border border-slate-700 rounded px-2 py-1 font-mono" />
+          </div>
+        </div>
+        <!-- buffer_deg -->
+        <div>
+          <label class="block text-xs text-slate-400 mb-1">余量 buffer_deg（°）</label>
+          <input type="number" step="0.5" min="0" x-model.number="newP.buffer_deg"
+                 class="w-full bg-slate-950 border border-slate-700 rounded px-2 py-1 font-mono"
+                 title="自动把 gate 转到 阈值±buffer 的位置（保证严格满足）" />
+        </div>
+
+        <!-- gate -->
+        <div>
+          <label class="block text-xs text-slate-400 mb-1">gate（必须先满足条件的关节）</label>
+          <select x-model="newP.gate"
+                  class="w-full bg-slate-950 border border-slate-700 rounded px-2 py-1">
+            <option value="">— 选择 —</option>
+            <template x-for="j in (state.joints||[])" :key="j.name">
+              <option :value="j.name" :disabled="!hasDegMapping(j)"
+                      x-text="jointLabel(j) + (hasDegMapping(j) ? '' : ' (未标度数)')"></option>
+            </template>
+          </select>
+        </div>
+        <!-- gate_op + gate_deg -->
+        <div class="md:col-span-2">
+          <label class="block text-xs text-slate-400 mb-1">
+            前置区间（gate 必须 <span x-text="newP.gate_op"></span> 阈值°）
+          </label>
+          <div class="flex items-center gap-1">
+            <div class="inline-flex bg-slate-800 rounded p-0.5 text-xs shrink-0">
+              <button type="button" class="px-2 py-1 rounded font-mono"
+                      :class="newP.gate_op==='>' ? 'bg-sky-600' : 'hover:bg-slate-700'"
+                      @click="newP.gate_op='>'">&gt;</button>
+              <button type="button" class="px-2 py-1 rounded font-mono"
+                      :class="newP.gate_op==='<' ? 'bg-sky-600' : 'hover:bg-slate-700'"
+                      @click="newP.gate_op='<'">&lt;</button>
+            </div>
+            <input type="number" step="0.5" x-model.number="newP.gate_deg"
+                   class="flex-1 min-w-0 bg-slate-950 border border-slate-700 rounded px-2 py-1 font-mono" />
+          </div>
+        </div>
+      </div>
+
+      <div class="flex items-center justify-between gap-2 pt-1">
+        <span class="text-xs text-slate-500">
+          预览：当
+          <span class="font-mono text-slate-300"
+                x-text="(newP.target ? jointLabelByName(newP.target) : '?') + ' ' + newP.target_op + ' ' + (newP.target_deg ?? '?') + '°'"></span>
+          时，先把
+          <span class="font-mono text-slate-300"
+                x-text="(newP.gate ? jointLabelByName(newP.gate) : '?') + ' 转到 ' + newP.gate_op + ' ' + (newP.gate_deg ?? '?') + '° (余量 ' + newP.buffer_deg + '°)'"></span>
+        </span>
+        <button class="bg-emerald-600 hover:bg-emerald-500 px-3 py-1.5 rounded text-sm"
+                :disabled="!newP.target || !newP.gate || newP.target===newP.gate
+                           || newP.target_deg === null || newP.target_deg === undefined
+                           || newP.gate_deg   === null || newP.gate_deg   === undefined"
+                @click="addPrereq()">
+          添加
+        </button>
+      </div>
+    </div>
+
+    <table class="w-full text-sm" x-show="(state.prerequisites||[]).length">
+      <thead class="text-slate-400 text-xs">
+        <tr class="border-b border-slate-700">
+          <th class="text-left py-1 pr-2 w-16">启用</th>
+          <th class="text-left py-1 pr-4">target</th>
+          <th class="text-left py-1 pr-4">触发条件</th>
+          <th class="text-left py-1 pr-4">gate</th>
+          <th class="text-left py-1 pr-4">前置区间</th>
+          <th class="text-left py-1 pr-4">余量°</th>
+          <th class="text-left py-1 pr-4">当前 gate</th>
+          <th class="text-left py-1 pr-2">备注</th>
+          <th class="text-left py-1 w-12"></th>
+        </tr>
+      </thead>
+      <tbody>
+        <template x-for="p in state.prerequisites" :key="p.target+'_'+p.gate">
+          <tr class="border-b border-slate-700/40" :class="{'opacity-50': p.enabled === false}">
+            <td class="py-1 pr-2">
+              <button class="relative inline-flex h-4 w-8 items-center rounded-full transition"
+                      :class="p.enabled !== false ? 'bg-emerald-500' : 'bg-slate-600'"
+                      @click="togglePrereqEnabled(p)" title="启用 / 禁用">
+                <span class="inline-block h-3 w-3 transform rounded-full bg-white transition"
+                      :class="p.enabled !== false ? 'translate-x-4' : 'translate-x-0.5'"></span>
+              </button>
+            </td>
+            <td class="py-1 pr-4 font-mono" x-text="jointLabelByName(p.target)"></td>
+            <td class="py-1 pr-4 font-mono"
+                x-text="p.target_op + ' ' + p.target_deg + '°'"></td>
+            <td class="py-1 pr-4 font-mono" x-text="jointLabelByName(p.gate)"></td>
+            <td class="py-1 pr-4 font-mono"
+                x-text="p.gate_op + ' ' + p.gate_deg + '°'"></td>
+            <td class="py-1 pr-4 font-mono" x-text="p.buffer_deg"></td>
+            <td class="py-1 pr-4">
+              <span x-show="p.enabled === false" class="text-slate-500">— 已禁用</span>
+              <template x-if="p.enabled !== false">
+                <span>
+                  <span x-show="prereqGateSatisfied(p)" class="text-emerald-400">✓ 满足</span>
+                  <span x-show="!prereqGateSatisfied(p)" class="text-amber-400">
+                    ⚠ 不满足 — <span x-text="prereqGateNote(p)"></span>
+                  </span>
+                </span>
+              </template>
+            </td>
+            <td class="py-1 pr-2">
+              <button class="text-xs text-slate-400 hover:text-sky-300 italic max-w-[12rem] truncate text-left"
+                      @click="editRuleNote('prerequisite', p)"
+                      :title="p.note || '点击添加备注'">
+                <span x-text="p.note || '＋'"></span>
+              </button>
+            </td>
+            <td class="py-1">
+              <button class="px-2 py-0.5 bg-slate-700 hover:bg-rose-700 rounded text-xs"
+                      @click="deletePrereq(p)" title="删除该前置联动">×</button>
+            </td>
+          </tr>
+        </template>
+      </tbody>
+    </table>
+
+    <div x-show="!(state.prerequisites||[]).length"
+         class="bg-slate-900/30 border border-dashed border-slate-700 rounded-lg p-6 text-center text-sm text-slate-500">
+      <div class="text-3xl mb-2" aria-hidden="true">⏱</div>
+      还没有前置联动。点右上角 "+ 新增前置联动" 来添加。
+    </div>
+    </div><!-- end Tab: prerequisite -->
+
+    <!-- ====== Tab 内容：条件限位 ====== -->
+    <div x-show="ruleTab==='zone_limit'" x-transition.opacity class="space-y-3">
+    <div class="flex items-center justify-between flex-wrap gap-2">
+      <div class="text-xs text-slate-500 flex-1 min-w-0">
+        含义：当 gate <code class="text-slate-300">gate_op gate_deg</code> 时，
+        target <b class="text-amber-300">禁止</b> <code class="text-slate-300">target_op target_deg</code>
+        （超过则<b>夹紧到边界</b>，不像联锁那样完全冻结）。
+      </div>
+      <button class="btn btn-sm shrink-0"
+              :class="newZ.show ? 'btn-ghost' : 'btn-primary'"
+              @click="newZ.show = !newZ.show; if(newZ.show) resetNewZone()">
+        <span x-text="newZ.show ? '✕ 取消' : '+ 新增条件限位'"></span>
+      </button>
+    </div>
+
+    <!-- 新增条件限位表单 -->
+    <div x-show="newZ.show" x-transition
+         class="bg-slate-900/60 rounded-md p-3 border border-slate-700/60 space-y-2 text-sm">
+      <div class="grid md:grid-cols-2 gap-2">
+        <!-- gate -->
+        <div>
+          <label class="block text-xs text-slate-400 mb-1">gate（激活条件的关节）</label>
+          <select x-model="newZ.gate"
+                  class="w-full bg-slate-950 border border-slate-700 rounded px-2 py-1">
+            <option value="">— 选择 —</option>
+            <template x-for="j in (state.joints||[])" :key="j.name">
+              <option :value="j.name" :disabled="!hasDegMapping(j)"
+                      x-text="jointLabel(j) + (hasDegMapping(j) ? '' : ' (未标度数)')"></option>
+            </template>
+          </select>
+        </div>
+        <!-- gate_op + gate_deg -->
+        <div>
+          <label class="block text-xs text-slate-400 mb-1">
+            激活条件（gate <span x-text="newZ.gate_op"></span> 阈值°）
+          </label>
+          <div class="flex items-center gap-1">
+            <div class="inline-flex bg-slate-800 rounded p-0.5 text-xs shrink-0">
+              <button type="button" class="px-2 py-1 rounded font-mono"
+                      :class="newZ.gate_op==='>' ? 'bg-sky-600' : 'hover:bg-slate-700'"
+                      @click="newZ.gate_op='>'">&gt;</button>
+              <button type="button" class="px-2 py-1 rounded font-mono"
+                      :class="newZ.gate_op==='<' ? 'bg-sky-600' : 'hover:bg-slate-700'"
+                      @click="newZ.gate_op='<'">&lt;</button>
+            </div>
+            <input type="number" step="0.5" x-model.number="newZ.gate_deg"
+                   class="flex-1 min-w-0 bg-slate-950 border border-slate-700 rounded px-2 py-1 font-mono" />
+          </div>
+        </div>
+        <!-- target -->
+        <div>
+          <label class="block text-xs text-slate-400 mb-1">target（被限位的关节）</label>
+          <select x-model="newZ.target"
+                  class="w-full bg-slate-950 border border-slate-700 rounded px-2 py-1">
+            <option value="">— 选择 —</option>
+            <template x-for="j in (state.joints||[])" :key="j.name">
+              <option :value="j.name" :disabled="!hasDegMapping(j)"
+                      x-text="jointLabel(j) + (hasDegMapping(j) ? '' : ' (未标度数)')"></option>
+            </template>
+          </select>
+        </div>
+        <!-- target_op + target_deg -->
+        <div>
+          <label class="block text-xs text-slate-400 mb-1">
+            禁止区间（target 禁止 <span x-text="newZ.target_op"></span> 阈值°）
+          </label>
+          <div class="flex items-center gap-1">
+            <div class="inline-flex bg-slate-800 rounded p-0.5 text-xs shrink-0">
+              <button type="button" class="px-2 py-1 rounded font-mono"
+                      :class="newZ.target_op==='>' ? 'bg-sky-600' : 'hover:bg-slate-700'"
+                      @click="newZ.target_op='>'">&gt;</button>
+              <button type="button" class="px-2 py-1 rounded font-mono"
+                      :class="newZ.target_op==='<' ? 'bg-sky-600' : 'hover:bg-slate-700'"
+                      @click="newZ.target_op='<'">&lt;</button>
+            </div>
+            <input type="number" step="0.5" x-model.number="newZ.target_deg"
+                   class="flex-1 min-w-0 bg-slate-950 border border-slate-700 rounded px-2 py-1 font-mono" />
+          </div>
+        </div>
+      </div>
+
+      <div class="flex items-center justify-between gap-2 pt-1">
+        <span class="text-xs text-slate-500">
+          预览：当
+          <span class="font-mono text-slate-300"
+                x-text="(newZ.gate ? jointLabelByName(newZ.gate) : '?') + ' ' + newZ.gate_op + ' ' + (newZ.gate_deg ?? '?') + '°'"></span>
+          时，
+          <span class="font-mono text-slate-300"
+                x-text="(newZ.target ? jointLabelByName(newZ.target) : '?') + ' 禁止 ' + newZ.target_op + ' ' + (newZ.target_deg ?? '?') + '°'"></span>
+        </span>
+        <button class="bg-emerald-600 hover:bg-emerald-500 px-3 py-1.5 rounded text-sm"
+                :disabled="!newZ.target || !newZ.gate || newZ.target===newZ.gate
+                           || newZ.target_deg === null || newZ.target_deg === undefined
+                           || newZ.gate_deg   === null || newZ.gate_deg   === undefined"
+                @click="addZone()">
+          添加
+        </button>
+      </div>
+    </div>
+
+    <table class="w-full text-sm" x-show="(state.zone_limits||[]).length">
+      <thead class="text-slate-400 text-xs">
+        <tr class="border-b border-slate-700">
+          <th class="text-left py-1 pr-2 w-16">启用</th>
+          <th class="text-left py-1 pr-4">gate</th>
+          <th class="text-left py-1 pr-4">激活条件</th>
+          <th class="text-left py-1 pr-4">target</th>
+          <th class="text-left py-1 pr-4">禁止区间</th>
+          <th class="text-left py-1 pr-4">当前是否激活</th>
+          <th class="text-left py-1 pr-2">备注</th>
+          <th class="text-left py-1 w-12"></th>
+        </tr>
+      </thead>
+      <tbody>
+        <template x-for="z in state.zone_limits" :key="z.target+'_'+z.gate">
+          <tr class="border-b border-slate-700/40" :class="{'opacity-50': z.enabled === false}">
+            <td class="py-1 pr-2">
+              <button class="relative inline-flex h-4 w-8 items-center rounded-full transition"
+                      :class="z.enabled !== false ? 'bg-emerald-500' : 'bg-slate-600'"
+                      @click="toggleZoneEnabled(z)" title="启用 / 禁用">
+                <span class="inline-block h-3 w-3 transform rounded-full bg-white transition"
+                      :class="z.enabled !== false ? 'translate-x-4' : 'translate-x-0.5'"></span>
+              </button>
+            </td>
+            <td class="py-1 pr-4 font-mono" x-text="jointLabelByName(z.gate)"></td>
+            <td class="py-1 pr-4 font-mono"
+                x-text="z.gate_op + ' ' + z.gate_deg + '°'"></td>
+            <td class="py-1 pr-4 font-mono" x-text="jointLabelByName(z.target)"></td>
+            <td class="py-1 pr-4 font-mono"
+                x-text="z.target_op + ' ' + z.target_deg + '°'"></td>
+            <td class="py-1 pr-4">
+              <span x-show="z.enabled === false" class="text-slate-500">— 已禁用</span>
+              <template x-if="z.enabled !== false">
+                <span>
+                  <span x-show="zoneActive(z)" class="text-amber-400">⚠ 激活 — <span x-text="zoneNote(z)"></span></span>
+                  <span x-show="!zoneActive(z)" class="text-slate-500">— 未激活</span>
+                </span>
+              </template>
+            </td>
+            <td class="py-1 pr-2">
+              <button class="text-xs text-slate-400 hover:text-sky-300 italic max-w-[12rem] truncate text-left"
+                      @click="editRuleNote('zone_limit', z)"
+                      :title="z.note || '点击添加备注'">
+                <span x-text="z.note || '＋'"></span>
+              </button>
+            </td>
+            <td class="py-1">
+              <button class="px-2 py-0.5 bg-slate-700 hover:bg-rose-700 rounded text-xs"
+                      @click="deleteZone(z)" title="删除该条件限位">×</button>
+            </td>
+          </tr>
+        </template>
+      </tbody>
+    </table>
+
+    <div x-show="!(state.zone_limits||[]).length"
+         class="bg-slate-900/30 border border-dashed border-slate-700 rounded-lg p-6 text-center text-sm text-slate-500">
+      <div class="text-3xl mb-2" aria-hidden="true">🚧</div>
+      还没有条件限位。点右上角 "+ 新增条件限位" 来添加。
+    </div>
+    </div><!-- end Tab: zone_limit -->
+  </section>
+
+  </div><!-- end max-w-6xl wrapper -->
+
+  <!-- ============ 干预事件浮动抽屉 ============ -->
+  <div class="fixed inset-y-0 right-0 z-40 flex pointer-events-none"
+       x-show="interventionsOpen" x-transition:enter="transition ease-out duration-200"
+       x-transition:enter-start="opacity-0 translate-x-4"
+       x-transition:enter-end="opacity-100 translate-x-0"
+       x-transition:leave="transition ease-in duration-150"
+       x-transition:leave-start="opacity-100 translate-x-0"
+       x-transition:leave-end="opacity-0 translate-x-4">
+    <div class="w-full sm:w-96 h-full glass border-l border-slate-700/60 flex flex-col pointer-events-auto shadow-2xl">
+      <div class="flex items-center justify-between px-4 py-3 border-b border-slate-700/60">
+        <div>
+          <h3 class="font-semibold flex items-center gap-2">
+            <span aria-hidden="true">🔔</span> 最近干预事件
+          </h3>
+          <div class="text-[10px] text-slate-500 mt-0.5">
+            共 <span class="font-mono text-slate-300" x-text="(state.interventions||[]).length"></span> 条 · 最多保留 20 条
+          </div>
+        </div>
+        <button class="btn btn-ghost btn-xs" @click="interventionsOpen=false" title="关闭">✕</button>
+      </div>
+      <!-- 图例 -->
+      <div class="px-4 py-2 border-b border-slate-700/60 flex items-center gap-3 text-[10px] flex-wrap">
+        <span class="flex items-center gap-1"><span class="px-1.5 py-0.5 rounded bg-rose-600/30 text-rose-300 uppercase font-mono">constraint</span>联锁冻结</span>
+        <span class="flex items-center gap-1"><span class="px-1.5 py-0.5 rounded bg-amber-600/30 text-amber-300 uppercase font-mono">zone_limit</span>限位夹紧</span>
+        <span class="flex items-center gap-1"><span class="px-1.5 py-0.5 rounded bg-sky-600/30 text-sky-300 uppercase font-mono">prerequisite</span>前置驱动</span>
+      </div>
+      <div class="flex-1 overflow-y-auto scrollbar-thin">
+        <template x-if="!(state.interventions||[]).length">
+          <div class="px-4 py-12 text-center text-sm text-slate-500">
+            <div class="text-4xl mb-2" aria-hidden="true">😌</div>
+            暂无干预事件，机械臂运动均未触发任何规则。
+          </div>
+        </template>
+        <template x-for="(iv, i) in [...(state.interventions||[])].reverse()" :key="i">
+          <div class="px-4 py-2.5 border-b border-slate-700/40 hover:bg-slate-800/40 transition">
+            <div class="flex items-center gap-2 mb-1">
+              <span class="px-1.5 py-0.5 rounded text-[10px] uppercase font-mono"
+                    :class="{
+                      'bg-rose-600/30 text-rose-300':   iv.kind==='constraint',
+                      'bg-amber-600/30 text-amber-300': iv.kind==='zone_limit',
+                      'bg-sky-600/30 text-sky-300':     iv.kind==='prerequisite',
+                    }"
+                    x-text="iv.kind"></span>
+              <span class="text-[10px] text-slate-500 font-mono ml-auto" x-text="formatTs(iv.ts)"></span>
+            </div>
+            <div class="text-xs text-slate-300 break-all leading-relaxed font-mono" x-text="iv.msg"></div>
+          </div>
+        </template>
+      </div>
+    </div>
+  </div>
+  <!-- 抽屉遮罩（点击关闭） -->
+  <div class="fixed inset-0 bg-black/40 backdrop-blur-sm z-30"
+       x-show="interventionsOpen" x-transition.opacity
+       @click="interventionsOpen=false"></div>
+
+  <!-- ============ Toast ============ -->
+  <div class="fixed bottom-4 right-4 space-y-2 z-50 pointer-events-none">
+    <template x-for="t in toasts" :key="t.id">
+      <div class="toast-anim pointer-events-auto px-3.5 py-2.5 rounded-lg shadow-2xl text-sm border flex items-center gap-2 min-w-[220px]"
+           :class="t.kind==='err' ? 'bg-rose-900/90 border-rose-500/40 text-rose-100' :
+                  (t.kind==='ok'  ? 'bg-emerald-900/90 border-emerald-500/40 text-emerald-100' :
+                                   'bg-slate-800/90 border-slate-600 text-slate-100')">
+        <span class="text-base" aria-hidden="true"
+              x-text="t.kind==='err' ? '❌' : (t.kind==='ok' ? '✅' : 'ℹ️')"></span>
+        <span x-text="t.msg" class="flex-1"></span>
+      </div>
+    </template>
+  </div>
+
+</main>
+
+<script>
+  function armApp() {
+    return {
+      // ---- WebSocket / state ----
+      state: { ready: false, error: null, state: 'disabled', joints: [], poses: {}, constraints: [], prerequisites: [], zone_limits: [], interventions: [] },
+      interventionsOpen: false,
+      ruleTab: 'constraint',       // 'constraint' | 'prerequisite' | 'zone_limit'
+      ws: { conn: null, connected: false },
+      busy: false,
+      unit: 'pct',                 // 'pct' | 'deg' | 'raw'
+      cmd: [],                     // 滑块/输入框的暂存值
+      calOpen: [],
+      newPoseName: '',
+      newC: { show: false, target: '', gate: '', gate_min_deg: 0, op: '>' },
+      editC: { key: null, gate_min_deg: 0, op: '>' },
+      newP: { show: false, target: '', target_op: '>', target_deg: 0,
+              gate: '', gate_op: '>', gate_deg: 0, buffer_deg: 2 },
+      newZ: { show: false, target: '', target_op: '>', target_deg: 0,
+              gate: '', gate_op: '>', gate_deg: 0 },
+      toasts: [],
+      _toastSeq: 0,
+
+      init() {
+        this.connectWS();
+        // 单位切换时把 cmd 重置为当前位置（避免旧单位数值串进新单位的滑块）
+        this.$watch('unit', () => {
+          this.cmd = (this.state.joints || []).map(j => this.sliderCurrent(j));
+        });
+        // 网络容错：3s 心跳，掉线自动重连
+        setInterval(() => {
+          if (!this.ws.connected) this.connectWS();
+        }, 3000);
+      },
+
+      connectWS() {
+        if (this.ws.conn) try { this.ws.conn.close(); } catch (e) {}
+        const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+        const url = proto + '//' + location.host + '/ws/state';
+        const c = new WebSocket(url);
+        this.ws.conn = c;
+        c.onopen = () => { this.ws.connected = true; };
+        c.onclose = () => { this.ws.connected = false; };
+        c.onerror = () => { this.ws.connected = false; };
+        c.onmessage = (ev) => {
+          try {
+            const data = JSON.parse(ev.data);
+            // 原地 merge joints：保持数组和每个 joint 对象引用稳定，避免每秒
+            // 5 次重建 DOM/x-for 子节点（否则联锁面板的 select 弹出层会被关掉）。
+            if (Array.isArray(data.joints)) {
+              const old = this.state.joints || [];
+              const byName = new Map(old.map(j => [j.name, j]));
+              data.joints = data.joints.map(nj => {
+                const oj = byName.get(nj.name);
+                if (oj) { Object.assign(oj, nj); return oj; }
+                return nj;
+              });
+              if (old.length === data.joints.length
+                  && old.every((o, i) => o === data.joints[i])) {
+                // 数组内容完全一样：直接复用旧引用，让 Alpine 不重渲染 x-for
+                data.joints = old;
+              }
+            }
+            // constraints 同理（target/gate/gate_min_deg/op/enabled/note 一般不变）
+            if (Array.isArray(data.constraints)) {
+              const oldC = this.state.constraints || [];
+              const sameLen = oldC.length === data.constraints.length;
+              const sameAll = sameLen && oldC.every((o, i) => {
+                const n = data.constraints[i];
+                return o.target === n.target && o.gate === n.gate
+                    && o.gate_min_deg === n.gate_min_deg
+                    && (o.op || '>') === (n.op || '>')
+                    && (o.enabled !== false) === (n.enabled !== false)
+                    && (o.note || '') === (n.note || '');
+              });
+              if (sameAll) data.constraints = oldC;
+            }
+            // prerequisites smart-merge
+            if (Array.isArray(data.prerequisites)) {
+              const oldP = this.state.prerequisites || [];
+              const sameLen = oldP.length === data.prerequisites.length;
+              const sameAll = sameLen && oldP.every((o, i) => {
+                const n = data.prerequisites[i];
+                return o.target === n.target && o.gate === n.gate
+                    && o.target_op === n.target_op && o.target_deg === n.target_deg
+                    && o.gate_op === n.gate_op && o.gate_deg === n.gate_deg
+                    && o.buffer_deg === n.buffer_deg
+                    && (o.enabled !== false) === (n.enabled !== false)
+                    && (o.note || '') === (n.note || '');
+              });
+              if (sameAll) data.prerequisites = oldP;
+            }
+            // zone_limits smart-merge
+            if (Array.isArray(data.zone_limits)) {
+              const oldZ = this.state.zone_limits || [];
+              const sameLen = oldZ.length === data.zone_limits.length;
+              const sameAll = sameLen && oldZ.every((o, i) => {
+                const n = data.zone_limits[i];
+                return o.target === n.target && o.gate === n.gate
+                    && o.target_op === n.target_op && o.target_deg === n.target_deg
+                    && o.gate_op === n.gate_op && o.gate_deg === n.gate_deg
+                    && (o.enabled !== false) === (n.enabled !== false)
+                    && (o.note || '') === (n.note || '');
+              });
+              if (sameAll) data.zone_limits = oldZ;
+            }
+            // interventions smart-merge：用最新一条的 ts 比较；相同时复用旧引用
+            if (Array.isArray(data.interventions)) {
+              const oldI = this.state.interventions || [];
+              const lastOld = oldI.length ? oldI[oldI.length - 1] : null;
+              const lastNew = data.interventions.length
+                ? data.interventions[data.interventions.length - 1] : null;
+              const same = oldI.length === data.interventions.length
+                  && ((lastOld == null && lastNew == null)
+                      || (lastOld && lastNew
+                          && lastOld.ts === lastNew.ts
+                          && lastOld.kind === lastNew.kind));
+              if (same) data.interventions = oldI;
+            }
+            this.state = Object.assign(this.state, data);
+            if (this.state.joints && this.state.joints.length && this.cmd.length !== this.state.joints.length) {
+              this.cmd = this.state.joints.map(j => this.sliderCurrent(j));
+              this.calOpen = this.state.joints.map(_ => false);
+            }
+          } catch (e) { console.error(e); }
+        };
+      },
+
+      // ---- 滑块单位换算 ----
+      sliderMin(j)   { return this.unit === 'pct' ? (j.is_bidirectional ? -1 : 0)
+                            : this.unit === 'deg' ? this.degBound(j, 'lo')
+                            : Math.min(j.home_raw, j.max_raw, j.low_raw ?? j.home_raw); },
+      sliderMax(j)   { return this.unit === 'pct' ? 1
+                            : this.unit === 'deg' ? this.degBound(j, 'hi')
+                            : Math.max(j.home_raw, j.max_raw, j.low_raw ?? j.home_raw); },
+      sliderStep(j)  { return this.unit === 'pct' ? 0.01 : (this.unit === 'deg' ? 0.5 : 1); },
+      sliderMinLabel(j) { return this.unit==='pct' ? this.sliderMin(j).toFixed(2)
+                              : this.unit==='deg' ? this.sliderMin(j).toFixed(0)+'°'
+                              : this.sliderMin(j); },
+      sliderMaxLabel(j) { return this.unit==='pct' ? this.sliderMax(j).toFixed(2)
+                              : this.unit==='deg' ? this.sliderMax(j).toFixed(0)+'°'
+                              : this.sliderMax(j); },
+      sliderCurrent(j)  { return this.unit==='pct' ? j.pct
+                              : this.unit==='deg' ? (j.deg ?? 0)
+                              : j.raw; },
+      hasDegMapping(j) {
+        if (j.max_deg === null || j.max_deg === undefined) return false;
+        if (j.is_bidirectional && (j.min_deg === null || j.min_deg === undefined)) return false;
+        return true;
+      },
+      degBound(j, which) {
+        if (!this.hasDegMapping(j)) return which==='lo' ? -180 : 180;
+        const home = j.home_deg ?? 0;
+        if (j.is_bidirectional) {
+          const candidates = [j.min_deg, j.max_deg, home];
+          return which==='lo' ? Math.min(...candidates) : Math.max(...candidates);
+        }
+        const candidates = [home, j.max_deg];
+        return which==='lo' ? Math.min(...candidates) : Math.max(...candidates);
+      },
+      sliderDisabled(j) {
+        if (this.state.state !== 'enabled') return true;
+        if (this.unit === 'deg' && !this.hasDegMapping(j)) return true;
+        return false;
+      },
+      liveMarkPct(j) {
+        const v = this.sliderCurrent(j);
+        const lo = this.sliderMin(j);
+        const hi = this.sliderMax(j);
+        if (hi === lo) return 50;
+        return Math.max(0, Math.min(100, ((v - lo) / (hi - lo)) * 100));
+      },
+      cmdMarkPct(j, idx) {
+        const v = this.cmd[idx];
+        if (v === null || v === undefined) return this.liveMarkPct(j);
+        const lo = this.sliderMin(j);
+        const hi = this.sliderMax(j);
+        if (hi === lo) return 50;
+        return Math.max(0, Math.min(100, ((v - lo) / (hi - lo)) * 100));
+      },
+      gaugeLivePct(j) {
+        if (!j) return 50;
+        const lo = Math.min(j.home_raw, j.max_raw, j.low_raw ?? j.home_raw);
+        const hi = Math.max(j.home_raw, j.max_raw, j.low_raw ?? j.home_raw);
+        if (hi === lo) return 50;
+        return Math.max(0, Math.min(100, ((j.raw - lo) / (hi - lo)) * 100));
+      },
+      gaugeHomePct(j) {
+        if (!j) return 50;
+        const lo = Math.min(j.home_raw, j.max_raw, j.low_raw ?? j.home_raw);
+        const hi = Math.max(j.home_raw, j.max_raw, j.low_raw ?? j.home_raw);
+        if (hi === lo) return 50;
+        return Math.max(0, Math.min(100, ((j.home_raw - lo) / (hi - lo)) * 100));
+      },
+
+      // ---- 发送命令 ----
+      async sendJoint(idx, val) {
+        if (this.state.state !== 'enabled') {
+          this.toast('请先 enable', 'err');
+          return;
+        }
+        const name = this.state.joints[idx].name;
+        const body = { speed: 800, acc: 30 };
+        if (this.unit === 'pct') body.pct = val;
+        else if (this.unit === 'deg') body.deg = val;
+        else body.raw = Math.round(val);
+        await this.callApi('POST', '/api/move-single/' + encodeURIComponent(name), body, /*silent*/true);
+      },
+
+      async capturePose() {
+        const name = this.newPoseName.trim();
+        if (!name) return;
+        await this.callApi('POST', '/api/poses/' + encodeURIComponent(name) + '/capture');
+        this.newPoseName = '';
+      },
+
+      // ---- 联锁状态查询 ----
+      jointLabel(j) {
+        if (!j) return '';
+        return 'j' + (j.id ?? '?');
+      },
+      jointLabelByName(name) {
+        const j = (this.state.joints || []).find(x => x.name === name);
+        return j ? this.jointLabel(j) : name;
+      },
+      constraintSatisfied(c) {
+        const j = (this.state.joints || []).find(x => x.name === c.gate);
+        if (!j || j.deg === null || j.deg === undefined) return true;
+        const op = c.op || '>';
+        return op === '<' ? j.deg < c.gate_min_deg : j.deg > c.gate_min_deg;
+      },
+      constraintNote(c) {
+        const j = (this.state.joints || []).find(x => x.name === c.gate);
+        const label = this.jointLabelByName(c.gate);
+        if (!j || j.deg === null || j.deg === undefined) return label + ' 没标度数';
+        return label + ' 当前 ' + j.deg.toFixed(1) + '°';
+      },
+
+      // ---- 联锁约束增删改 ----
+      resetNewConstraint() {
+        this.newC.target = '';
+        this.newC.gate = '';
+        this.newC.gate_min_deg = 0;
+        this.newC.op = '>';
+      },
+      async addConstraint() {
+        if (!this.newC.target || !this.newC.gate) return;
+        if (this.newC.target === this.newC.gate) {
+          this.toast('target 与 gate 不能是同一关节', 'err');
+          return;
+        }
+        const r = await this.callApi('POST', '/api/constraints', {
+          target: this.newC.target,
+          gate: this.newC.gate,
+          gate_min_deg: this.newC.gate_min_deg,
+          op: this.newC.op,
+        });
+        if (r) {
+          this.newC.show = false;
+          this.resetNewConstraint();
+        }
+      },
+      async deleteConstraint(c) {
+        const tl = this.jointLabelByName(c.target);
+        const gl = this.jointLabelByName(c.gate);
+        const op = c.op || '>';
+        if (!confirm(`删除联锁 "${tl} ← ${gl} ${op} ${c.gate_min_deg}°"？`)) return;
+        await this.callApi('DELETE',
+          `/api/constraints/${encodeURIComponent(c.target)}/${encodeURIComponent(c.gate)}`);
+      },
+      startEditConstraint(c) {
+        this.editC.key = c.target + '_' + c.gate;
+        this.editC.gate_min_deg = c.gate_min_deg;
+        this.editC.op = c.op || '>';
+      },
+      async saveEditConstraint(c) {
+        const r = await this.callApi('PUT',
+          `/api/constraints/${encodeURIComponent(c.target)}/${encodeURIComponent(c.gate)}`,
+          { gate_min_deg: this.editC.gate_min_deg, op: this.editC.op });
+        if (r) this.editC.key = null;
+      },
+
+      async toggleConstraintEnabled(c) {
+        await this.callApi('PUT',
+          `/api/constraints/${encodeURIComponent(c.target)}/${encodeURIComponent(c.gate)}`,
+          { enabled: !(c.enabled !== false) });
+      },
+      async togglePrereqEnabled(p) {
+        await this.callApi('PUT',
+          `/api/prerequisites/${encodeURIComponent(p.target)}/${encodeURIComponent(p.gate)}`,
+          { enabled: !(p.enabled !== false) });
+      },
+      async toggleZoneEnabled(z) {
+        await this.callApi('PUT',
+          `/api/zone-limits/${encodeURIComponent(z.target)}/${encodeURIComponent(z.gate)}`,
+          { enabled: !(z.enabled !== false) });
+      },
+
+      async editRuleNote(kind, item) {
+        const newNote = prompt('为该规则添加备注（留空清除）：', item.note || '');
+        if (newNote === null) return;   // 用户取消
+        const path = kind === 'constraint'   ? '/api/constraints'
+                    : kind === 'prerequisite' ? '/api/prerequisites'
+                    :                            '/api/zone-limits';
+        await this.callApi('PUT',
+          `${path}/${encodeURIComponent(item.target)}/${encodeURIComponent(item.gate)}`,
+          { note: newNote });
+      },
+
+      formatTs(ts) {
+        if (!ts) return '';
+        const d = new Date(ts * 1000);
+        const hh = String(d.getHours()).padStart(2,'0');
+        const mm = String(d.getMinutes()).padStart(2,'0');
+        const ss = String(d.getSeconds()).padStart(2,'0');
+        return `${hh}:${mm}:${ss}`;
+      },
+
+      // ---- 前置联动 ----
+      resetNewPrereq() {
+        this.newP.target = '';
+        this.newP.target_op = '>';
+        this.newP.target_deg = 0;
+        this.newP.gate = '';
+        this.newP.gate_op = '>';
+        this.newP.gate_deg = 0;
+        this.newP.buffer_deg = 2;
+      },
+      async addPrereq() {
+        if (!this.newP.target || !this.newP.gate) return;
+        if (this.newP.target === this.newP.gate) {
+          this.toast('target 与 gate 不能是同一关节', 'err');
+          return;
+        }
+        const r = await this.callApi('POST', '/api/prerequisites', {
+          target: this.newP.target,
+          target_op: this.newP.target_op,
+          target_deg: this.newP.target_deg,
+          gate: this.newP.gate,
+          gate_op: this.newP.gate_op,
+          gate_deg: this.newP.gate_deg,
+          buffer_deg: this.newP.buffer_deg,
+        });
+        if (r) {
+          this.newP.show = false;
+          this.resetNewPrereq();
+        }
+      },
+      async deletePrereq(p) {
+        const tl = this.jointLabelByName(p.target);
+        const gl = this.jointLabelByName(p.gate);
+        if (!confirm(
+          `删除前置联动 "当 ${tl} ${p.target_op} ${p.target_deg}° 时，` +
+          `${gl} 必须 ${p.gate_op} ${p.gate_deg}°"？`
+        )) return;
+        await this.callApi('DELETE',
+          `/api/prerequisites/${encodeURIComponent(p.target)}/${encodeURIComponent(p.gate)}`);
+      },
+      prereqGateSatisfied(p) {
+        const j = (this.state.joints || []).find(x => x.name === p.gate);
+        if (!j || j.deg === null || j.deg === undefined) return false;
+        return p.gate_op === '<' ? j.deg < p.gate_deg : j.deg > p.gate_deg;
+      },
+      prereqGateNote(p) {
+        const j = (this.state.joints || []).find(x => x.name === p.gate);
+        const label = this.jointLabelByName(p.gate);
+        if (!j || j.deg === null || j.deg === undefined) return label + ' 没标度数';
+        return label + ' 当前 ' + j.deg.toFixed(1) + '°';
+      },
+
+      // ---- 条件限位 ----
+      resetNewZone() {
+        this.newZ.target = '';
+        this.newZ.target_op = '>';
+        this.newZ.target_deg = 0;
+        this.newZ.gate = '';
+        this.newZ.gate_op = '>';
+        this.newZ.gate_deg = 0;
+      },
+      async addZone() {
+        if (!this.newZ.target || !this.newZ.gate) return;
+        if (this.newZ.target === this.newZ.gate) {
+          this.toast('target 与 gate 不能是同一关节', 'err');
+          return;
+        }
+        const r = await this.callApi('POST', '/api/zone-limits', {
+          target: this.newZ.target,
+          target_op: this.newZ.target_op,
+          target_deg: this.newZ.target_deg,
+          gate: this.newZ.gate,
+          gate_op: this.newZ.gate_op,
+          gate_deg: this.newZ.gate_deg,
+        });
+        if (r) {
+          this.newZ.show = false;
+          this.resetNewZone();
+        }
+      },
+      async deleteZone(z) {
+        const tl = this.jointLabelByName(z.target);
+        const gl = this.jointLabelByName(z.gate);
+        if (!confirm(
+          `删除条件限位 "当 ${gl} ${z.gate_op} ${z.gate_deg}° 时，` +
+          `${tl} 禁止 ${z.target_op} ${z.target_deg}°"？`
+        )) return;
+        await this.callApi('DELETE',
+          `/api/zone-limits/${encodeURIComponent(z.target)}/${encodeURIComponent(z.gate)}`);
+      },
+      zoneActive(z) {
+        const j = (this.state.joints || []).find(x => x.name === z.gate);
+        if (!j || j.deg === null || j.deg === undefined) return false;
+        return z.gate_op === '<' ? j.deg < z.gate_deg : j.deg > z.gate_deg;
+      },
+      zoneNote(z) {
+        const j = (this.state.joints || []).find(x => x.name === z.gate);
+        const label = this.jointLabelByName(z.gate);
+        if (!j || j.deg === null || j.deg === undefined) return label + ' 没标度数';
+        return label + ' 当前 ' + j.deg.toFixed(1) + '°';
+      },
+
+      // ---- HTTP 通用 ----
+      async callApi(method, url, body=null, silent=false) {
+        this.busy = true;
+        try {
+          const opts = { method, headers: {'Content-Type':'application/json'} };
+          if (body) opts.body = JSON.stringify(body);
+          const r = await fetch(url, opts);
+          if (!r.ok) {
+            const txt = await r.text();
+            this.toast(method + ' ' + url + ' → ' + r.status + ': ' + txt, 'err');
+            return null;
+          }
+          const data = await r.json().catch(() => ({}));
+          if (!silent) this.toast(method + ' ' + url + ' ✓', 'ok');
+          return data;
+        } catch (e) {
+          this.toast(e.message, 'err');
+          return null;
+        } finally { this.busy = false; }
+      },
+
+      toast(msg, kind='info') {
+        const id = ++this._toastSeq;
+        this.toasts.push({ id, msg, kind });
+        setTimeout(() => { this.toasts = this.toasts.filter(t => t.id !== id); }, 4200);
+      },
+    };
+  }
+
+  // 标定子表单：每个关节独立持有 form 状态
+  function calForm(joint) {
+    return {
+      form: {
+        home_raw: joint.home_raw,
+        max_raw:  joint.max_raw,
+        low_raw:  joint.low_raw,
+        min_deg:  joint.min_deg,
+        max_deg:  joint.max_deg,
+        home_deg: joint.home_deg,
+        unset_low: false,
+        unset_deg: false,
+      },
+      async captureRaw(name, field) {
+        const r = await fetch('/api/joints/' + encodeURIComponent(name) + '/capture-raw',
+          { method:'POST', headers:{'Content-Type':'application/json'},
+            body: JSON.stringify({ field }) });
+        if (!r.ok) { alert(await r.text()); return; }
+        const data = await r.json();
+        this.form[field] = data.raw;
+      },
+      async saveCal(name) {
+        const r = await fetch('/api/joints/' + encodeURIComponent(name) + '/calibration',
+          { method:'PUT', headers:{'Content-Type':'application/json'},
+            body: JSON.stringify(this.form) });
+        if (!r.ok) { alert(await r.text()); return; }
+        // 成功后让 unset 复位
+        this.form.unset_low = false;
+        this.form.unset_deg = false;
+      },
+    };
+  }
+</script>
+
+</body>
+</html>

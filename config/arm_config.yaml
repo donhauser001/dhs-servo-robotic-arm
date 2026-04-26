@@ -1,0 +1,108 @@
+# 6 DOF 总线舵机机械臂配置
+#
+# 关节顺序：从底座到末端
+# 舵机原始位置范围：0..4095（对应 360°，分辨率 0.088°）
+#
+# 标定模型 = 两点：
+#   home_raw → 应用层 0%   （初始位 / 上电默认位置）
+#   max_raw  → 应用层 100% （行程另一端）
+#
+# 方向由 max_raw 在 home_raw 哪一侧自然决定，max>home 或 max<home 都合法。
+# 应用层用 arm.move_pct([..]) 发送 0.0..1.0；
+# 物理角度可选，仅在做正逆运动学时需要标定 min_deg / max_deg。
+
+bus:
+  # 默认串口（按平台自动覆盖：见 arm/bus.py 的 default_port）
+  # macOS:        /dev/cu.usbserial-* 或 /dev/cu.wchusbserial*
+  # Linux 树莓派: /dev/serial0 (GPIO) 或 /dev/ttyUSB0 (USB 档位)
+  # Windows:      COM3 等
+  port: auto
+  baudrate: 1000000      # SMS_STS 默认 1Mbps
+  timeout: 0.05          # 单次读取超时（秒）
+
+joints:
+  - name: base            # J1 底座旋转
+    id: 1
+    model: ST3020
+    home_raw: 2048        # 0% = 当前初始位（已标定，硬件 OFFSET=1659）
+    max_raw: 4085         # +100% = home + 179.3°（逆时针，已标定）
+    low_raw: 26           # -100% = home - 178.0°（顺时针，已标定）
+    # min_deg: 0.0        # 可选：home 对应的物理角度
+    # max_deg: 180.0      # 可选：max 对应的物理角度
+    max_speed: 1500       # 步/秒（0..3073）
+    max_acc: 50           # 启停加速度（0..150）
+
+    min_deg: -178.0
+    max_deg: 179.3
+  - name: shoulder        # J2 大臂关节
+    id: 2
+    model: ST3025
+    home_raw: 794         # 0% = 当前初始位（已标定，无 OFFSET）
+    max_raw: 2325         # +100% = home + 134.7°（已标定）
+    low_raw: 114          # -100% = home - 60.0°（重力下死点，已标定）
+    max_speed: 1200
+    max_acc: 30
+
+    min_deg: -60.0
+    max_deg: 134.7
+  - name: elbow           # J3 小臂关节
+    id: 3
+    model: ST3025
+    home_raw: 2048        # 0% = 当前初始位（已标定，硬件 OFFSET=1637）
+    max_raw: 232          # +100% = home - 159.8°（已标定）
+    low_raw: 2445         # -100% = home + 34.9°（已标定）
+    # 度数映射（home_deg 默认 0°）
+    min_deg: 34.9         # low_raw 处（小臂朝伸展方向 +34.9°）
+    max_deg: -159.8       # max_raw 处（小臂朝折叠方向 -159.8°）
+    max_speed: 1200
+    max_acc: 30
+
+  - name: wrist_pitch     # J4 腕部俯仰
+    id: 4
+    model: ST3235
+    home_raw: 2048        # 0% = 当前初始位（已标定，硬件 OFFSET=-346）
+    max_raw: 4037         # +100% = home + 175°（已标定）
+    low_raw: 59           # -100% = home - 175°（已标定）
+    max_speed: 1500
+    max_acc: 50
+
+    min_deg: -175.0
+    max_deg: 175.0
+  - name: wrist_roll      # J5 腕部旋转
+    id: 5
+    model: ST3235
+    home_raw: 2048        # 0% = 当前初始位（已标定，硬件 OFFSET=-1297）
+    max_raw: 1311         # +100% = home - 64.9°（已标定）
+    low_raw: 3433         # -100% = home + 121.9°（已标定）
+    max_speed: 1500
+    max_acc: 50
+
+    min_deg: 121.9
+    max_deg: -64.9
+  - name: end_roll        # J6 末端旋转
+    id: 6
+    model: ST3020
+    home_raw: 1508
+    max_raw: 4095
+    max_speed: 1500
+    max_acc: 50
+
+# 整机姿态（按关节顺序 J1..J6 的 raw 列表）
+    max_deg: 227.6
+poses:
+  # 停止工作 / 安全姿态：扭矩 OFF 时机械臂在重力下能自然保持的姿态
+  safe: [4029, 2301, 2434, 2044, 2050, 1508]
+  # 准备工作 / 工作起点：扭矩 ON 后机械臂的待命姿态
+  ready: [2051, 1193, 2439, 2043, 2048, 1508]
+geometry:
+  l1_base_height: 0.0     # 底座 → J2 转轴高度
+  l2_upper_arm: 0.0       # J2 → J3 长度
+  l3_forearm: 0.0         # J3 → J5 长度
+  l4_wrist: 0.0           # J5 → 末端 长度
+
+# 安全策略
+safety:
+  enable_torque_on_init: false  # 启动时不要立刻锁扭矩
+  speed_limit: 1800             # 全局最大速度上限（保护用）
+  current_warning_ma: 1500      # 单舵机电流告警阈值（毫安）
+  temp_warning_c: 65            # 温度告警阈值（℃）

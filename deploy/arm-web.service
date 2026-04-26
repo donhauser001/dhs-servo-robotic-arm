@@ -1,0 +1,28 @@
+[Unit]
+Description=6-DOF Arm Web Console (FastAPI + uvicorn)
+Documentation=file:///home/aiden/duoji/webapp
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=aiden
+Group=aiden
+WorkingDirectory=/home/aiden/duoji
+ExecStart=/home/aiden/duoji/.venv/bin/python -m webapp.server --host 0.0.0.0 --port 8000
+
+# 异常退出时自动重启（开机后串口偶尔慢一拍也能拉起来）
+Restart=on-failure
+RestartSec=5
+
+# 给 FastAPI lifespan 时间执行：set_torque(False) → bus.close()
+KillSignal=SIGTERM
+TimeoutStopSec=10
+
+# 日志走 journald，用 `journalctl -u arm-web -f` 实时查看
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=arm-web
+
+[Install]
+WantedBy=multi-user.target
